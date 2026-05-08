@@ -4,26 +4,39 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Juneteenth BBQ Potluck</title>
+    <!-- Tailwind for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Babel Standalone to handle the React code -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body class="bg-[#121212] text-slate-100 min-h-screen">
-    <div id="root"></div>
+    <div id="root">
+        <!-- This shows up if the JavaScript fails to load -->
+        <div class="flex items-center justify-center min-h-screen">
+            <p class="text-slate-500 animate-pulse">Loading the cookout...</p>
+        </div>
+    </div>
 
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
         import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
         
-        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js';
-        import { getFirestore, collection, addDoc, onSnapshot, deleteDoc, doc } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js';
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from 'https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js';
+        // Using standard Firebase CDN links
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
+        import { getFirestore, collection, addDoc, onSnapshot, query, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
 
-        // --- DATABASE CONNECTION (FIXED) ---
-        const firebaseConfig = JSON.parse(__firebase_config);
-        const app = initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'juneteenth-bbq-potluck';
+        // Attempting to pull config from the hosting environment
+        let db, auth, appId;
+        try {
+            const firebaseConfig = JSON.parse(__firebase_config);
+            const app = initializeApp(firebaseConfig);
+            auth = getAuth(app);
+            db = getFirestore(app);
+            appId = typeof __app_id !== 'undefined' ? __app_id : 'juneteenth-final';
+        } catch (e) {
+            console.error("Config error:", e);
+        }
 
         const CATEGORIES = [
             { id: 'main', label: 'Main Dish', color: 'bg-red-900/30 text-red-400 border-red-800' },
@@ -40,30 +53,22 @@
             const [isSubmitting, setIsSubmitting] = useState(false);
 
             useEffect(() => {
-                const initAuth = async () => {
-                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-                        await signInWithCustomToken(auth, __initial_auth_token);
-                    } else {
-                        await signInAnonymously(auth);
-                    }
-                };
-                initAuth();
-                const unsubscribe = onAuthStateChanged(auth, setUser);
-                return () => unsubscribe();
+                if (!auth) return;
+                signInAnonymously(auth).catch(err => console.error("Auth failed", err));
+                return onAuthStateChanged(auth, setUser);
             }, []);
 
             useEffect(() => {
-                if (!user) return;
-                
+                if (!user || !db) return;
+                // Rule 1: Using the mandatory strict path
                 const potluckRef = collection(db, 'artifacts', appId, 'public', 'data', 'potluck_items');
-                const unsubscribe = onSnapshot(potluckRef, 
-                    (snapshot) => {
-                        const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                        setItems(docs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)));
-                    },
-                    (error) => console.error("Sync Error:", error)
-                );
-                return () => unsubscribe();
+                
+                // Rule 2: Simple query to avoid index errors
+                return onSnapshot(potluckRef, (snapshot) => {
+                    const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    // Sorting in memory to stay compliant with Rule 2
+                    setItems(docs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)));
+                }, (err) => console.error("Firestore Error:", err));
             }, [user]);
 
             const handleSubmit = async (e) => {
@@ -86,80 +91,41 @@
                 }
             };
 
-            const deleteItem = async (id, itemUserId) => {
-                if (user?.uid !== itemUserId) return;
-                try {
-                    await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'potluck_items', id));
-                } catch (err) {
-                    console.error("Delete failed");
-                }
-            };
-
             return (
                 <div className="max-w-xl mx-auto p-4 md:p-8 font-sans">
                     <header className="text-center mb-10 border-b-2 border-yellow-600 pb-8 mt-6">
-                        <div className="flex justify-center mb-4">
-                            <span className="text-5xl">🔥</span>
-                        </div>
                         <h1 className="text-5xl font-black italic text-red-500 uppercase tracking-tighter">Juneteenth BBQ</h1>
-                        <p className="text-green-500 font-bold uppercase tracking-widest text-xs mt-3 italic">Community Potluck Signup</p>
+                        <p className="text-green-500 font-bold uppercase tracking-widest text-xs mt-3 italic">Community Potluck</p>
                     </header>
 
-                    <form onSubmit={handleSubmit} className="bg-slate-900 p-8 rounded-[2.5rem] border border-slate-800 mb-10 shadow-2xl">
-                        <div className="space-y-5">
-                            <div>
-                                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 ml-1">Guest Name</label>
-                                <input required className="w-full bg-slate-800 p-4 rounded-2xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-red-500 transition-all" placeholder="Enter your name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 ml-1">Bringing...</label>
-                                <input required className="w-full bg-slate-800 p-4 rounded-2xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-green-500 transition-all" placeholder="Mac & Cheese, Ribs, etc." value={formData.dish} onChange={e => setFormData({...formData, dish: e.target.value})} />
-                            </div>
-                            <div>
-                                <label className="block text-[10px] font-black uppercase tracking-widest text-slate-500 mb-2 ml-1">Category</label>
-                                <select className="w-full bg-slate-800 p-4 rounded-2xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-yellow-500 appearance-none" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
-                                    {CATEGORIES.map(cat => <option key={cat.id} value={cat.id} className="bg-slate-900">{cat.label}</option>)}
-                                </select>
-                            </div>
-                            <button disabled={isSubmitting || !user} className="w-full bg-red-600 hover:bg-red-700 text-white py-5 rounded-2xl font-black uppercase tracking-widest shadow-[0_6px_0_rgb(153,27,27)] active:translate-y-1 active:shadow-none transition-all disabled:opacity-50 mt-4">
-                                {isSubmitting ? 'SIGNING UP...' : 'JOIN THE FEAST'}
+                    <form onSubmit={handleSubmit} className="bg-slate-900 p-6 rounded-3xl border border-slate-800 mb-10 shadow-2xl">
+                        <div className="space-y-4">
+                            <input required className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-red-500" placeholder="Your Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                            <input required className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-green-500" placeholder="What are you bringing?" value={formData.dish} onChange={e => setFormData({...formData, dish: e.target.value})} />
+                            <select className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                                {CATEGORIES.map(cat => <option key={cat.id} value={cat.id}>{cat.label}</option>)}
+                            </select>
+                            <button disabled={isSubmitting || !user} className="w-full bg-red-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 transition-all disabled:opacity-50">
+                                {isSubmitting ? '...' : 'SIGN UP'}
                             </button>
                         </div>
                     </form>
 
-                    <div className="space-y-4 pb-20">
-                        <h2 className="text-xs font-black uppercase tracking-[0.4em] text-slate-500 text-center italic mb-8">The Table ({items.length})</h2>
+                    <div className="space-y-4">
                         {items.length === 0 ? (
-                            <div className="text-center py-16 border-2 border-dashed border-slate-800 rounded-[2rem] text-slate-600 text-[10px] font-black uppercase tracking-[0.3em]">
-                                The table is empty. Be the first to sign up!
-                            </div>
+                            <p className="text-center text-slate-600 uppercase text-[10px] font-black tracking-widest py-10">The table is empty...</p>
                         ) : (
-                            items.map(item => {
-                                const category = CATEGORIES.find(c => c.id === item.category);
-                                return (
-                                    <div key={item.id} className="bg-slate-900 p-6 rounded-[1.5rem] border border-slate-800 flex justify-between items-center group hover:border-slate-600 transition-all">
-                                        <div className="flex items-center gap-5">
-                                            <div className={`w-2 h-12 rounded-full ${category?.color.split(' ')[0]}`}></div>
-                                            <div>
-                                                <p className="font-black text-2xl text-white tracking-tight leading-tight">{item.dish}</p>
-                                                <p className="text-[10px] text-slate-500 uppercase tracking-[0.2em] mt-1 font-bold">
-                                                    By <span className="text-green-500">{item.name}</span>
-                                                </p>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            <span className={`hidden sm:block text-[9px] font-black uppercase px-3 py-1.5 rounded-lg border tracking-widest ${category?.color}`}>
-                                                {category?.label}
-                                            </span>
-                                            {user?.uid === item.userId && (
-                                                <button onClick={() => deleteItem(item.id, item.userId)} className="text-slate-700 hover:text-red-500 transition-colors p-2 text-xl">
-                                                    ✕
-                                                </button>
-                                            )}
-                                        </div>
+                            items.map(item => (
+                                <div key={item.id} className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex justify-between items-center group">
+                                    <div>
+                                        <p className="font-black text-xl text-white tracking-tight">{item.dish}</p>
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">By {item.name}</p>
                                     </div>
-                                )
-                            })
+                                    <span className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg border ${CATEGORIES.find(c => c.id === item.category)?.color}`}>
+                                        {CATEGORIES.find(c => c.id === item.category)?.label}
+                                    </span>
+                                </div>
+                            ))
                         )}
                     </div>
                 </div>
