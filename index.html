@@ -4,39 +4,26 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Juneteenth BBQ Potluck</title>
-    <!-- Tailwind for styling -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Babel Standalone to handle the React code -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 </head>
 <body class="bg-[#121212] text-slate-100 min-h-screen">
-    <div id="root">
-        <!-- This shows up if the JavaScript fails to load -->
-        <div class="flex items-center justify-center min-h-screen">
-            <p class="text-slate-500 animate-pulse">Loading the cookout...</p>
-        </div>
-    </div>
+    <div id="root"></div>
 
     <script type="text/babel" data-type="module">
         import React, { useState, useEffect } from 'https://esm.sh/react@18.2.0';
         import ReactDOM from 'https://esm.sh/react-dom@18.2.0/client';
         
-        // Using standard Firebase CDN links
-        import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js';
-        import { getFirestore, collection, addDoc, onSnapshot, query, limit } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js';
-        import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.7.1/firebase-auth.js';
+        import { initializeApp } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-app.js';
+        import { getFirestore, collection, addDoc, onSnapshot, serverTimestamp } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-firestore.js';
+        import { getAuth, signInAnonymously, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/11.0.2/firebase-auth.js';
 
-        // Attempting to pull config from the hosting environment
-        let db, auth, appId;
-        try {
-            const firebaseConfig = JSON.parse(__firebase_config);
-            const app = initializeApp(firebaseConfig);
-            auth = getAuth(app);
-            db = getFirestore(app);
-            appId = typeof __app_id !== 'undefined' ? __app_id : 'juneteenth-final';
-        } catch (e) {
-            console.error("Config error:", e);
-        }
+        // --- DATABASE SETUP ---
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'juneteenth-bbq-2024';
 
         const CATEGORIES = [
             { id: 'main', label: 'Main Dish', color: 'bg-red-900/30 text-red-400 border-red-800' },
@@ -52,40 +39,50 @@
             const [formData, setFormData] = useState({ name: '', dish: '', category: 'main' });
             const [isSubmitting, setIsSubmitting] = useState(false);
 
+            // Log in as soon as the page loads
             useEffect(() => {
-                if (!auth) return;
-                signInAnonymously(auth).catch(err => console.error("Auth failed", err));
+                const login = async () => {
+                    try {
+                        await signInAnonymously(auth);
+                    } catch (e) {
+                        console.error("Login Error:", e);
+                    }
+                };
+                login();
                 return onAuthStateChanged(auth, setUser);
             }, []);
 
+            // Listen for table updates
             useEffect(() => {
-                if (!user || !db) return;
-                // Rule 1: Using the mandatory strict path
                 const potluckRef = collection(db, 'artifacts', appId, 'public', 'data', 'potluck_items');
-                
-                // Rule 2: Simple query to avoid index errors
-                return onSnapshot(potluckRef, (snapshot) => {
+                const unsubscribe = onSnapshot(potluckRef, (snapshot) => {
                     const docs = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    // Sorting in memory to stay compliant with Rule 2
                     setItems(docs.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0)));
-                }, (err) => console.error("Firestore Error:", err));
-            }, [user]);
+                });
+                return () => unsubscribe();
+            }, []);
 
             const handleSubmit = async (e) => {
                 e.preventDefault();
-                if (!user || !formData.name || !formData.dish) return;
+                if (!formData.name || !formData.dish) return;
+                
                 setIsSubmitting(true);
-
                 try {
                     const potluckRef = collection(db, 'artifacts', appId, 'public', 'data', 'potluck_items');
+                    
+                    // We try to use the actual user ID, but use a backup if login is slow
+                    const uid = auth.currentUser ? auth.currentUser.uid : "guest-" + Math.random().toString(36).slice(2, 7);
+                    
                     await addDoc(potluckRef, { 
                         ...formData, 
-                        userId: user.uid, 
+                        userId: uid, 
                         timestamp: Date.now() 
                     });
+                    
                     setFormData(prev => ({ ...prev, dish: '' }));
                 } catch (err) {
                     console.error("Save error:", err);
+                    alert("Could not save. Please check your connection.");
                 } finally {
                     setIsSubmitting(false);
                 }
@@ -95,31 +92,53 @@
                 <div className="max-w-xl mx-auto p-4 md:p-8 font-sans">
                     <header className="text-center mb-10 border-b-2 border-yellow-600 pb-8 mt-6">
                         <h1 className="text-5xl font-black italic text-red-500 uppercase tracking-tighter">Juneteenth BBQ</h1>
-                        <p className="text-green-500 font-bold uppercase tracking-widest text-xs mt-3 italic">Community Potluck</p>
+                        <p className="text-green-500 font-bold uppercase tracking-widest text-xs mt-3">Community Potluck</p>
                     </header>
 
                     <form onSubmit={handleSubmit} className="bg-slate-900 p-6 rounded-3xl border border-slate-800 mb-10 shadow-2xl">
                         <div className="space-y-4">
-                            <input required className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-red-500" placeholder="Your Name" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
-                            <input required className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-green-500" placeholder="What are you bringing?" value={formData.dish} onChange={e => setFormData({...formData, dish: e.target.value})} />
-                            <select className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white" value={formData.category} onChange={e => setFormData({...formData, category: e.target.value})}>
+                            <input 
+                                required 
+                                className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-red-500" 
+                                placeholder="Your Name" 
+                                value={formData.name} 
+                                onChange={e => setFormData({...formData, name: e.target.value})} 
+                            />
+                            <input 
+                                required 
+                                className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white outline-none focus:ring-2 focus:ring-green-500" 
+                                placeholder="What are you bringing?" 
+                                value={formData.dish} 
+                                onChange={e => setFormData({...formData, dish: e.target.value})} 
+                            />
+                            <select 
+                                className="w-full bg-slate-800 p-4 rounded-xl border border-slate-700 text-white" 
+                                value={formData.category} 
+                                onChange={e => setFormData({...formData, category: e.target.value})}
+                            >
                                 {CATEGORIES.map(cat => <option key={cat.id} value={cat.id}>{cat.label}</option>)}
                             </select>
-                            <button disabled={isSubmitting || !user} className="w-full bg-red-600 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 transition-all disabled:opacity-50">
-                                {isSubmitting ? '...' : 'SIGN UP'}
+                            
+                            <button 
+                                type="submit"
+                                disabled={isSubmitting}
+                                className="w-full bg-red-600 hover:bg-red-700 text-white py-4 rounded-2xl font-black uppercase tracking-widest shadow-[0_4px_0_rgb(153,27,27)] active:translate-y-1 active:shadow-none transition-all disabled:opacity-50"
+                            >
+                                {isSubmitting ? 'SIGNING UP...' : 'JOIN THE FEAST'}
                             </button>
                         </div>
                     </form>
 
-                    <div className="space-y-4">
+                    <div className="space-y-4 pb-20">
+                        <h2 className="text-xs font-black uppercase tracking-widest text-slate-500 text-center italic mb-4">The Community Table</h2>
                         {items.length === 0 ? (
-                            <p className="text-center text-slate-600 uppercase text-[10px] font-black tracking-widest py-10">The table is empty...</p>
+                            <p className="text-center text-slate-600 uppercase text-[10px] font-black tracking-widest py-10">Waiting for the first dish...</p>
                         ) : (
                             items.map(item => (
-                                <div key={item.id} className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex justify-between items-center group">
+                                <div key={item.id} className="bg-slate-900 p-5 rounded-2xl border border-slate-800 flex justify-between items-center">
                                     <div>
-                                        <p className="font-black text-xl text-white tracking-tight">{item.dish}</p>
-                                        <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold">By {item.name}</p>
+                                        <p className="font-black text-xl text-white tracking-tight leading-tight">{item.dish}</p>
+                                        <p className="text-[10px] text-slate-500 uppercase tracking-widest font-bold mt-1">By {item.name}</p>
                                     </div>
                                     <span className={`text-[9px] font-black uppercase px-3 py-1.5 rounded-lg border ${CATEGORIES.find(c => c.id === item.category)?.color}`}>
                                         {CATEGORIES.find(c => c.id === item.category)?.label}
